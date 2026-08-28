@@ -160,21 +160,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     const playerInfo = await c.getPlayerPage(slug, detail.streamId);
 
     if (playerInfo.streamUrl) {
-      streams.push({
+      const stream = {
         url: playerInfo.streamUrl,
         name: "Scaryo",
-        description: "Direct Stream",
-        behaviorHints: {
-          notWebReady: true,
-          proxyHeaders: {
-            request: {
-              Cookie: c.cookies,
-              Referer: playerInfo.playerUrl,
-              Origin: BASE_URL,
-            },
-          },
-        },
-      });
+        description: detail.title || "Direct Stream",
+      };
+      if (playerInfo.streamUrl.includes("cloudfront.net")) {
+        stream.behaviorHints = { notWebReady: false };
+      }
+      streams.push(stream);
     }
 
     if (playerInfo.playerUrl && playerInfo.hasContent) {

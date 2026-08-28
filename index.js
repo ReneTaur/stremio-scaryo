@@ -1,4 +1,5 @@
-const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
+const { addonBuilder, getRouter } = require("stremio-addon-sdk");
+const express = require("express");
 const { ScaryoClient, GENRES, BASE_URL, HTTP_ROOT } = require("./lib/scaryo");
 
 const manifest = {
@@ -195,7 +196,64 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 });
 
 const port = parseInt(process.env.PORT) || 7000;
+const BASE_PATH = process.env.BASE_PATH || "";
 
-serveHTTP(builder.getInterface(), { port });
-console.log(`Scaryo.tv Stremio addon running at http://127.0.0.1:${port}`);
-console.log(`Configure & install: http://127.0.0.1:${port}/configure`);
+const app = express();
+const addonInterface = builder.getInterface();
+const router = getRouter(addonInterface);
+
+if (BASE_PATH) {
+  app.use(BASE_PATH, router);
+  app.get(BASE_PATH + "/configure", (req, res) => {
+    const page = `<!DOCTYPE html>
+<html style="background-image:url(https://dl.strem.io/addon-background.jpg);">
+<head>
+<meta charset="utf-8"><title>Scaryo.tv - Stremio Addon</title>
+<link href="https://fonts.googleapis.com/css?family=Open+Sans:400,600,700&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box}body,html{margin:0;padding:0;width:100%;min-height:100%}
+html{background-size:cover;background-position:center;box-shadow:inset 0 0 0 2000px rgb(0 0 0/60%)}
+body{padding:4vh;font-size:2.2vh;display:flex;font-family:'Open Sans',Arial,sans-serif;color:#fff}
+h1{font-size:4.5vh;font-weight:700}h2{font-size:2.2vh;font-weight:normal;font-style:italic;opacity:.8}
+#addon{width:40vh;margin:auto}.logo{height:14vh;width:14vh;margin:auto auto 3vh}
+.logo img{width:100%}.separator{margin-bottom:4vh}.form-element{margin-bottom:2vh}
+.label-to-top{margin-bottom:1vh}.full-width{width:100%;padding:.8vh;font-size:2vh}
+button{border:0;outline:0;color:#fff;background:#8A5AAB;padding:1.2vh 3.5vh;margin:auto;
+text-align:center;font-family:'Open Sans',Arial,sans-serif;font-size:2.2vh;font-weight:600;
+cursor:pointer;display:block;box-shadow:0 .5vh 1vh rgba(0,0,0,.2)}
+button:hover{box-shadow:none}a.install-link{text-decoration:none}</style>
+</head><body><div id="addon">
+<div class="logo"><img src="${addonInterface.manifest.logo}"></div>
+<h1>${addonInterface.manifest.name}</h1>
+<h2>v${addonInterface.manifest.version}</h2>
+<h2>${addonInterface.manifest.description}</h2>
+<div class="separator"></div>
+<form class="pure-form" id="mainForm">
+<div class="form-element"><div class="label-to-top">Scaryo.tv Email</div>
+<input type="text" id="email" name="email" class="full-width" required/></div>
+<div class="form-element"><div class="label-to-top">Scaryo.tv Password</div>
+<input type="password" id="password" name="password" class="full-width" required/></div>
+</form>
+<div class="separator"></div>
+<a id="installLink" class="install-link" href="#">
+<button>INSTALL</button></a>
+</div>
+<script>
+installLink.onclick=()=>mainForm.reportValidity();
+function updateLink(){
+  const config=Object.fromEntries(new FormData(mainForm));
+  installLink.href='stremio://'+location.host+'${BASE_PATH}/'+encodeURIComponent(JSON.stringify(config))+'/manifest.json';
+}
+mainForm.onchange=updateLink;
+updateLink();
+</script></body></html>`;
+    res.setHeader("Content-Type", "text/html");
+    res.end(page);
+  });
+} else {
+  app.use(router);
+}
+
+app.listen(port, () => {
+  console.log(`Scaryo.tv Stremio addon running at http://127.0.0.1:${port}${BASE_PATH}`);
+  console.log(`Configure & install: http://127.0.0.1:${port}${BASE_PATH}/configure`);
+});

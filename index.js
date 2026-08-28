@@ -203,8 +203,7 @@ const addonInterface = builder.getInterface();
 const router = getRouter(addonInterface);
 
 if (BASE_PATH) {
-  app.use(BASE_PATH, router);
-  app.get(BASE_PATH + "/configure", (req, res) => {
+  app.get("/configure", (req, res) => {
     const page = `<!DOCTYPE html>
 <html style="background-image:url(https://dl.strem.io/addon-background.jpg);">
 <head>
@@ -249,9 +248,9 @@ updateLink();
     res.setHeader("Content-Type", "text/html");
     res.end(page);
   });
-} else {
-  app.use(router);
 }
+
+app.use(router);
 
 app.listen(port, () => {
   console.log(`Scaryo.tv Stremio addon running at http://127.0.0.1:${port}${BASE_PATH}`);

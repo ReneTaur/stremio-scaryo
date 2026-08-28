@@ -1,0 +1,12 @@
+services:
+  - type: web
+    runtime: node
+    name: stremio-scaryo
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: SCARYO_EMAIL
+        sync: false
+      - key: SCARYO_PASSWORD
+        sync: false

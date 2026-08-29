@@ -1,10 +1,11 @@
 const { addonBuilder, getRouter } = require("stremio-addon-sdk");
 const express = require("express");
+const crypto = require("crypto");
 const { ScaryoClient, GENRES, BASE_URL, HTTP_ROOT } = require("./lib/scaryo");
 
 const manifest = {
   id: "community.scaryo",
-  version: "1.1.0",
+  version: "1.2.0",
   name: "Scaryo.tv",
   description: "Browse and stream horror movies from Scaryo.tv (Danish horror streaming). Requires a Scaryo.tv subscription.",
   logo: "https://d2wk81qbuk09ji.cloudfront.net/68067/public/public/system/application_image/SCARYO_digital_Logo_horizontal_Color_White_RGB.png",
@@ -43,6 +44,7 @@ const builder = new addonBuilder(manifest);
 const clients = new Map();
 const cache = new Map();
 const CACHE_TTL = 30 * 60 * 1000;
+const sessionTokens = new Map();
 
 function getClient(config) {
   const email = (config && config.email) || "";
@@ -61,6 +63,56 @@ async function ensureAuth(config) {
     await c.login();
   }
   return c;
+}
+
+function getSessionToken(email) {
+  for (const [token, e] of sessionTokens.entries()) {
+    if (e === email) return token;
+  }
+  const token = crypto.randomBytes(16).toString("hex");
+  sessionTokens.set(token, email);
+  return token;
+}
+
+function renderPlayerPage(title, mpdUrl, licenseUrl, poster) {
+  const safeTitle = title.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  const jsonMpd = JSON.stringify(mpdUrl);
+  const jsonLicense = JSON.stringify(licenseUrl);
+  const jsonPoster = JSON.stringify(poster || "");
+  return `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${safeTitle} - Scaryo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
+.wrap{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;position:relative}
+video{width:100%;height:100%;background:#000}
+#status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+font-size:clamp(16px,3vw,28px);text-align:center;max-width:80%;text-shadow:0 2px 8px #000}
+#status.error{color:#f55}
+</style>
+</head><body>
+<div class="wrap">
+<video id="v" controls autoplay poster=${jsonPoster}></video>
+<div id="status">Loading…</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/5.1.6/shaka-player.compiled.min.js"></script>
+<script>
+(async()=>{
+const st=document.getElementById("status");
+shaka.polyfills.installAll();
+if(!shaka.Player.isBrowserSupported()){st.className="error";st.textContent="Browser does not support DRM playback.";return}
+const v=document.getElementById("v"),p=new shaka.Player();
+await p.attach(v);
+p.configure({drm:{servers:{"com.widevine.alpha":${jsonLicense}}}});
+p.addEventListener("error",e=>{st.className="error";st.textContent="Error: "+(e.detail?.message||e.message||"Unknown")});
+try{await p.load(${jsonMpd});st.style.display="none";v.play().catch(()=>{})}
+catch(e){st.className="error";st.textContent="Failed: "+e.message}
+})();
+</script>
+</body></html>`;
 }
 
 function cached(key) {
@@ -159,22 +211,20 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
     const playerInfo = await c.getPlayerPage(slug, detail.streamId);
 
-    if (playerInfo.streamUrl) {
-      const stream = {
-        url: playerInfo.streamUrl,
-        name: "Scaryo",
-        description: detail.title || "Direct Stream",
-      };
-      if (playerInfo.streamUrl.includes("cloudfront.net")) {
-        stream.behaviorHints = { notWebReady: false };
-      }
-      streams.push(stream);
+    if (playerInfo.mpdUrl && playerInfo.widevineLicenseUrl) {
+      const token = getSessionToken(config.email);
+      const publicUrl = process.env.PUBLIC_URL || `http://127.0.0.1:${port}${BASE_PATH}`;
+      streams.push({
+        externalUrl: `${publicUrl}/play/${token}/${slug}`,
+        name: "Scaryo DRM",
+        description: `${detail.title || slug} (Widevine)`,
+      });
     }
 
     if (playerInfo.playerUrl && playerInfo.hasContent) {
       streams.push({
         externalUrl: playerInfo.playerUrl,
-        name: "Scaryo Player",
+        name: "Scaryo Web",
         description: "Open in Scaryo web player",
       });
     }
@@ -243,6 +293,33 @@ updateLink();
     res.end(page);
   });
 }
+
+app.get("/play/:token/:slug", async (req, res) => {
+  const email = sessionTokens.get(req.params.token);
+  if (!email) {
+    res.status(403).send("Invalid or expired session.");
+    return;
+  }
+  const client = clients.get(email);
+  if (!client) {
+    res.status(403).send("Session not found. Reopen from Stremio.");
+    return;
+  }
+  try {
+    if (!client.authenticated) await client.login();
+    const detail = await client.getMovieDetail(req.params.slug);
+    const player = await client.getPlayerPage(req.params.slug, detail.streamId);
+    if (!player.mpdUrl || !player.widevineLicenseUrl) {
+      res.status(404).send("No DRM stream available for this title.");
+      return;
+    }
+    res.setHeader("Content-Type", "text/html");
+    res.end(renderPlayerPage(detail.title, player.mpdUrl, player.widevineLicenseUrl, detail.poster));
+  } catch (e) {
+    console.error("Play error:", e.message);
+    res.status(500).send("Failed to load stream.");
+  }
+});
 
 app.use(router);
 
